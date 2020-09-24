@@ -1,0 +1,104 @@
+#### Packages ####
+import glob, os
+import pandas as pd
+
+#### Functions ####
+def get_fastq_reads(wcs):
+    if LAYOUT == 'PAIRED':  # Paired-end
+        return [f"{PREFIX}/fastq/reads/{{wcs.sample}}_val_1.fq.gz", f"{PREFIX}/fastq/reads/{{wcs.sample}}_val_2.fq.gz"]
+
+    if LAYOUT == 'SINGLE':  # Single-end
+        return [f"{PREFIX}/fastq/reads/{{wcs.sample}}_trimmed.fq.gz"]
+
+def get_layout(metadata_path):
+    metadata = pd.read_csv(metadata_path, header=0, sep=',')
+
+    return metadata['LibraryLayout'][0]
+
+
+def get_organism(metadata_path):
+    metadata = pd.read_csv(metadata_path, header=0, sep=',')
+    organism = metadata['Organism'][0]
+
+    return 'human' if organism == 'Homo sapiens' else 'mouse'
+
+#### Config ####
+workdir: config['base']
+configfile: "config/config.yaml"
+localrules: all
+
+PREFIX = f"data/{config['proj']}"
+SAMPLES = [os.path.basename(sample).replace('.fq.gz', '') for sample in glob.glob(f"{PREFIX}/fastq/*.fq.gz")
+          if not ["trimmed", "val"] in os.path.basename(sample)]
+ORGANISM = get_organism(config['metadata'])
+LAYOUT = get_layout(config['metadata'])
+
+#### Workflow ####
+rule all:
+    input:
+        f"{PREFIX}/processed/{config['proj']}_featurecounts.txt"
+
+rule trimgalore_trim:
+    input:
+        expand(f"{PREFIX}/fastq/{{sample}}.fq.gz", sample=SAMPLES)
+    resources:
+        time_min = 240,
+        nodes = 1,
+        tasks = 1,
+        cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
+    params:
+        job_name = f"{config['proj']}_TRIM"
+    run:
+        if LAYOUT == "SINGLE":
+            shell(f"""trim_galore -j {{resources.cpus}} --stringency 3 \
+            -o {PREFIX}/fastq {{input}}""")
+        elif LAYOUT == "PAIRED":
+            shell(f"""trim_galore -j {{resources.cpus}} --stringency 3 --paired \
+            -o {PREFIX}/fastq {{input}}""")
+
+rule star_alignment:
+    input:
+        reads = get_fastq_reads
+    output:
+        f"{PREFIX}/bam/{{sample}}_sorted.bam"
+    resources:
+        time_min = 360,
+        nodes = 1,
+        tasks = 1,
+        cpus = 6
+    params:
+        job_name = f"{{sample}}_STARALIGN"
+    shell:
+        f"""STAR \
+        --runThreadN {{resources.cpus}} \
+        --genomeDir {config['star'][ORGANISM]} \
+        --sjdbGTFfile {config['gtf'][ORGANISM]} \
+        --readFilesIn {{input.reads}} \
+        --readFilesCommand gunzip -c \
+        --outFileNamePrefix {PREFIX}/bam/{{sample}} \
+        --outSAMtype BAM SortedByCoordinate \
+        --outSAMunmapped Within \
+        --outSAMattributes Standard && \
+        samtools sort {PREFIX}/bam/{{sample}}.bam -o {PREFIX}/bam/{{sample}}_sorted.bam
+        """
+
+rule featureCounts_counting:
+    input:
+        expand(f"{PREFIX}/bam/{{sample}}_sorted.bam", sample=SAMPLES)
+    output:
+        f"{PREFIX}/processed/{config['proj']}_featurecounts.txt"
+    resources:
+        time_min = 360,
+        nodes = 1,
+        tasks = 1,
+        cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
+    params:
+        strandedness = int(config['strand'])
+    shell:
+        f"""featureCounts \
+        -a {config['fasta'][ORGANISM]} \
+        -T {{resources.cpus}} \
+        -s {{params.strandedness}} \
+        -o {PREFIX}/processed/{config['proj']}_featurecounts.txt \
+        {{input}}
+        """

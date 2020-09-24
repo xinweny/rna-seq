@@ -1,0 +1,10 @@
+base: "/rds/project/rs2099/rds-rs2099-toxgenomics/rna-seq/"
+fasta:
+  human: "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/human/GRCh38.primary_assembly.genome.fa"
+  mouse: "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/mouse/GRCm38.primary_assembly.genome.fa"
+gtf:
+  human: "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/human/gencode.v34.annotation.gtf"
+  mouse: "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/mouse/gencode.vM25.annotation.gtf"
+star:
+  human: "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/human/STAR"
+  mouse: "/rds/project/rs2099/rds-rs2099-toxgenomics/shared/mouse/STAR"
