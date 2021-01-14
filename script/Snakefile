@@ -84,8 +84,6 @@ rule trimgalore_single:
         expand(f"{PREFIX}/fastq/{{sample}}_trimmed.fq.gz", sample=SAMPLES)
     resources:
         time_min = 120,
-        nodes = 1,
-        tasks = 1,
         cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
     params:
         job_name = f"{config['proj']}_TRIMSINGLE"
@@ -100,8 +98,6 @@ rule trimgalore_paired:
         expand(f"{PREFIX}/fastq/{{sample}}_{{i}}_val_{{i}}.fq.gz", sample=SAMPLES, i=[1, 2])
     resources:
         time_min = 120,
-        nodes = 1,
-        tasks = 1,
         cpus = len(SAMPLES) * 2 if len(SAMPLES) < 16 else 32
     params:
         job_name = f"{config['proj']}_TRIMPAIRED"
@@ -116,8 +112,6 @@ rule star_alignment:
         f"{PREFIX}/bam/{{sample}}.bam"
     resources:
         time_min = 240,
-        nodes = 1,
-        tasks = 1,
         cpus = 6
     params:
         job_name = "{sample}_STARALIGN"
@@ -142,8 +136,6 @@ rule featureCounts_counting:
         f"{PREFIX}/processed/{config['proj']}_rawCounts.txt"
     resources:
         time_min = 180,
-        nodes = 1,
-        tasks = 1,
         cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
     params:
         job_name = f"{config['proj']}_FEATURECOUNTS",
