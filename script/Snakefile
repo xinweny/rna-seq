@@ -1,0 +1,157 @@
+#### Packages ####
+import glob, os
+import pandas as pd
+import subprocess
+
+#### Functions ####
+def get_samples(path, ext):
+    samples = set([os.path.basename(sample).replace(f".{ext}", '') for sample in glob.glob(f"{path}*.{ext}")
+              if not any(match in os.path.basename(sample) for match in ['trimmed', 'val'])])
+
+    if LAYOUT == 'PAIRED':
+        samples = set([sample[:-2] for sample in samples])
+
+    return samples
+
+def get_fastq_reads(wcs):
+    if LAYOUT == 'PAIRED':  # Paired-end
+        return [f"{PREFIX}/fastq/{wcs.sample}_{i}_val_{i}.fq.gz" for i in [1, 2]]
+
+    if LAYOUT == 'SINGLE':  # Single-end
+        return [f"{PREFIX}/fastq/{wcs.sample}_trimmed.fq.gz"]
+
+def get_layout(metadata_path):
+    metadata = pd.read_csv(metadata_path, header=0, sep=',')
+
+    return metadata['LibraryLayout'][0]
+
+def get_organism(metadata_path):
+    metadata = pd.read_csv(metadata_path, header=0, sep=',')
+    organism = metadata['Organism'][0]
+
+    return 'human' if organism == 'Homo sapiens' else 'mouse'
+
+def infer_strandedness(bedgenome_path, bam_path):
+    p = subprocess.Popen(['infer_experiment.py', '-r', bedgenome_path, '-i', bam_path],
+            stdout=subprocess.PIPE)
+    output = str(p.stdout.read())
+
+    print(output)
+
+    rseqc_out = output.split('\\n')
+    fr_firststrand = float(rseqc_out[5].split(' ')[-1])
+    fr_secondstrand = float(rseqc_out[4].split(' ')[-1])
+
+    if fr_firststrand > 0.85:
+        library_type = 'fr-firststrand'
+    elif fr_secondstrand > 0.85:
+        library_type = 'fr-secondstrand'
+    else:
+        library_type = 'fr-unstranded'
+
+    if library_type == 'fr-firststrand' and LAYOUT == 'PAIRED':
+        strandedness = 2
+    elif library_type == 'fr-secondstrand' and LAYOUT == 'PAIRED':
+        strandedness = 1
+    elif library_type == 'fr-firststrand' and LAYOUT == 'SINGLE':
+        strandedness = 2
+    elif library_type == 'fr-secondstrand' and LAYOUT == 'SINGLE':
+        strandedness = 1
+    elif library_type == 'fr-unstranded':
+        strandedness = 0
+
+    return strandedness
+
+#### Config ####
+configfile: "config/config.yaml"
+workdir: config['base']
+localrules: all
+
+PREFIX = f"data/{config['proj']}"
+LAYOUT = get_layout(f"{config['base']}/{PREFIX}/SraRunTable_{config['proj']}.txt")
+ORGANISM = get_organism(f"{config['base']}/{PREFIX}/SraRunTable_{config['proj']}.txt")
+SAMPLES = get_samples(f"{PREFIX}/fastq/", 'fq.gz')
+
+#### Workflow ####
+rule all:
+    input:
+        f"{PREFIX}/processed/{config['proj']}_rawCounts.txt"
+
+rule trimgalore_single:
+    input:
+        expand(f"{PREFIX}/fastq/{{sample}}.fq.gz", sample=SAMPLES)
+    output:
+        expand(f"{PREFIX}/fastq/{{sample}}_trimmed.fq.gz", sample=SAMPLES)
+    resources:
+        time_min = 120,
+        cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
+    params:
+        job_name = f"{config['proj']}_TRIMSINGLE"
+    shell:
+        f"""trim_galore -j {{resources.cpus}} --stringency 3 \
+            -o {PREFIX}/fastq {{input}}"""
+
+rule trimgalore_paired:
+    input:
+        expand(f"{PREFIX}/fastq/{{sample}}_{{i}}.fq.gz", sample=SAMPLES, i=[1, 2])
+    output:
+        expand(f"{PREFIX}/fastq/{{sample}}_{{i}}_val_{{i}}.fq.gz", sample=SAMPLES, i=[1, 2])
+    resources:
+        time_min = 120,
+        cpus = len(SAMPLES) * 2 if len(SAMPLES) < 16 else 32
+    params:
+        job_name = f"{config['proj']}_TRIMPAIRED"
+    shell:
+        f"""trim_galore -j {{resources.cpus}} --stringency 3 --paired \
+            -o {PREFIX}/fastq {{input}}"""
+
+rule star_alignment:
+    input:
+        reads = get_fastq_reads
+    output:
+        f"{PREFIX}/bam/{{sample}}.bam"
+    resources:
+        time_min = 240,
+        cpus = 6
+    params:
+        job_name = "{sample}_STARALIGN"
+    run:
+        shell(f"""STAR \
+        --runThreadN {{resources.cpus}} \
+        --genomeDir {config['star'][ORGANISM]} \
+        --sjdbGTFfile {config['gtf'][ORGANISM]} \
+        --readFilesIn {{input.reads}} \
+        --readFilesCommand gunzip -c \
+        --outFileNamePrefix {PREFIX}/bam/{{wildcards.sample}} \
+        --outSAMtype BAM SortedByCoordinate \
+        --outSAMunmapped Within \
+        --outSAMattributes Standard
+        """)
+        shell(f"samtools sort {PREFIX}/bam/{{wildcards.sample}}Aligned.sortedByCoord.out.bam -o {PREFIX}/bam/{{wildcards.sample}}.bam")
+
+rule featureCounts_counting:
+    input:
+        expand(f"{PREFIX}/bam/{{sample}}.bam", sample=SAMPLES)
+    output:
+        f"{PREFIX}/processed/{config['proj']}_rawCounts.txt"
+    resources:
+        time_min = 180,
+        cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
+    params:
+        job_name = f"{config['proj']}_FEATURECOUNTS",
+        paired = '-p' if LAYOUT == 'PAIRED' else ''
+    run:
+        strandedness = infer_strandedness(config['bed'][ORGANISM], input[0])
+
+        shell(f"""featureCounts \
+        -a {config['gtf'][ORGANISM]} \
+        -T {{resources.cpus}} \
+        -s {strandedness} \
+        {{params.paired}} \
+        -o {PREFIX}/processed/{config['proj']}_featurecounts_raw.txt \
+        {{input}}
+        """)
+        shell(f"""python3 script/format_featurecounts.py \
+        -i {PREFIX}/processed/{config['proj']}_featurecounts_raw.txt \
+        -o  {PREFIX}/processed/{config['proj']}_rawCounts.txt
+        """)
