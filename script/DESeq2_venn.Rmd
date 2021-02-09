@@ -1,0 +1,68 @@
+---
+title: "Venn Diagram from DESeq2 output"
+output: html_notebook
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+require("knitr")
+opts_knit$set(root.dir="~/mrc/project/rna-seq/")
+```
+
+```{r packages}
+suppressPackageStartupMessages({
+  library(ggplot2)
+  library(dplyr)
+  library(ggVennDiagram)
+})
+```
+
+```{r load_data}
+set1 <- read.table(glue("processed/PROJ1707_DESeq_HeLa_Scrambled_siRNA_Recovery_vs_HeLa_Scrambled_siRNA_CTRL.txt"),
+                   header=TRUE, sep='\t',
+                   row.names=1, check.names=FALSE) %>%
+  filter(padj < alpha)
+set2 <- read.table(glue("processed/PROJ1707_DESeq_HeLa_CHIP_siRNA_Recovery_vs_HeLa_CHIP_siRNA_CTRL.txt"),
+                   header=TRUE, sep='\t',
+                   row.names=1, check.names=FALSE) %>%
+  filter(padj < alpha)
+
+totalSet <- list(
+  set1=rownames(set1),
+  set2=rownames(set2)
+)
+
+# Set parameters
+treatment <- "Recovery"
+control <- "CTRL"
+
+set1.name <- "Scrambled"
+set2.name <- "CHIP"
+
+alpha <- 0.05
+```
+
+``` {r venn_diagram}
+# Generate Venn Diagram
+venn <- ggVennDiagram(totalSet,
+                      category.names=c(set1.name, set2.name)) +
+  theme(legend.position="bottom") +
+  ggtitle(glue("{treatment} vs {control} genes (alpha={alpha})"))
+
+ggsave(glue("processed/{proj}_venn_{treatment}vs{control}.png"), venn)
+
+# Parse Venn diagram into separate lists
+out.set1 <- set1[!(rownames(set1) %in% rownames(set2)), ]
+out.set2 <- set2[!(rownames(set2) %in% rownames(set1)), ]
+both <- set1[!(rownames(set1) %in% rownames(out.set1)), ]
+
+write.table(out.set1,
+            file=glue("processed/{proj}_{treatment}vs{control}_{set1.name}only_{alpha}.txt"),
+            row.names=TRUE, col.names=TRUE, sep="\t", quote=FALSE)
+write.table(out.set2,
+            file=glue("processed/{proj}_{treatment}vs{control}_{set2.name}only_{alpha}.txt"),
+            row.names=TRUE, col.names=TRUE, sep="\t", quote=FALSE)
+write.table(both,
+            file=glue("processed/{proj}_{treatment}vs{control}_{set1.name}and{set2.name}_{alpha}.txt"),
+            row.names=TRUE, col.names=TRUE, sep="\t", quote=FALSE)
+
+```

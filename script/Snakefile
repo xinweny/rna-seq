@@ -13,12 +13,26 @@ def get_samples(path, ext):
 
     return samples
 
-def get_fastq_reads(wcs):
+def get_raw_reads(wcs):
+    if LAYOUT == 'PAIRED':  # Paired-end
+        return expand(f"{PREFIX}/fastq/{{sample}}_{{i}}.{EXT}", sample=SAMPLES, i=[1, 2])
+
+    if LAYOUT == 'SINGLE':  # Single-end
+        return expand(f"{PREFIX}/fastq/{{sample}}.{EXT}", sample=SAMPLES)
+
+def get_trimmed_reads(wcs):
     if LAYOUT == 'PAIRED':  # Paired-end
         return [f"{PREFIX}/fastq/{wcs.sample}_{i}_val_{i}.fq.gz" for i in [1, 2]]
 
     if LAYOUT == 'SINGLE':  # Single-end
         return [f"{PREFIX}/fastq/{wcs.sample}_trimmed.fq.gz"]
+
+def get_fastqc(wcs):
+    if LAYOUT == 'PAIRED':  # Paired-end
+        return expand(f"{PREFIX}/qc/{{sample}}_{{i}}_fastqc.html", sample=SAMPLES, i=[1, 2])
+
+    if LAYOUT == 'SINGLE':  # Single-end
+        return expand(f"{PREFIX}/qc/{{sample}}_fastqc.html", sample=SAMPLES)
 
 def get_layout(metadata_path):
     metadata = pd.read_csv(metadata_path, header=0, sep=',')
@@ -27,9 +41,9 @@ def get_layout(metadata_path):
 
 def get_organism(metadata_path):
     metadata = pd.read_csv(metadata_path, header=0, sep=',')
-    organism = metadata['Organism'][0]
+    organism_name = metadata['Organism'][0]
 
-    return 'human' if organism == 'Homo sapiens' else 'mouse'
+    return organism_name.replace(' ', '_').lower()
 
 def infer_strandedness(bedgenome_path, bam_path):
     p = subprocess.Popen(['infer_experiment.py', '-r', bedgenome_path, '-i', bam_path],
@@ -60,7 +74,16 @@ def infer_strandedness(bedgenome_path, bam_path):
     elif library_type == 'fr-unstranded':
         strandedness = 0
 
+        print(f"featureCounts strandedness: {strandedness}")
+    
     return strandedness
+
+def custom_param(param, default):
+    try:
+        return config[param]
+
+    except KeyError:
+        return default
 
 #### Config ####
 configfile: "config/config.yaml"
@@ -68,22 +91,61 @@ workdir: config['base']
 localrules: all
 
 PREFIX = f"data/{config['proj']}"
-LAYOUT = get_layout(f"{config['base']}/{PREFIX}/SraRunTable_{config['proj']}.txt")
-ORGANISM = get_organism(f"{config['base']}/{PREFIX}/SraRunTable_{config['proj']}.txt")
-SAMPLES = get_samples(f"{PREFIX}/fastq/", 'fq.gz')
+EXT = str(custom_param('ext', 'fastq.gz'))
+
+if os.path.exists(f"{PREFIX}/SraRunTable_{config['proj']}.txt"):
+    LAYOUT = get_layout(f"{PREFIX}/SraRunTable_{config['proj']}.txt")
+    ORGANISM = get_organism(f"{PREFIX}/SraRunTable_{config['proj']}.txt")
+else:
+    LAYOUT = config['layout']
+    ORGANISM = config['organism']
+
+SAMPLES = get_samples(f"{PREFIX}/fastq/", EXT)
 
 #### Workflow ####
 rule all:
     input:
-        f"{PREFIX}/processed/{config['proj']}_rawCounts.txt"
+        expand(f"{PREFIX}/bam/{{sample}}.bam", sample=SAMPLES),
+        f"{PREFIX}/processed/{config['proj']}_rawCounts.txt",
+        f"{PREFIX}/qc/multiqc_report.html"
+
+rule fastqc_single:
+    input:
+        get_raw_reads
+    output:
+        expand(f"{PREFIX}/qc/{{sample}}_fastqc.html", sample=SAMPLES)
+    conda:
+        "envs/qc.yml"
+    resources:
+        time_min = 60,
+        cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
+    params:
+        job_name = f"{config['proj']}_FASTQC"
+    shell:
+        f"fastqc -t {{resources.cpus}} -o {PREFIX}/qc {{input}}"
+
+rule fastqc_paired:
+    input:
+        get_raw_reads
+    output:
+        expand(f"{PREFIX}/qc/{{sample}}_{{i}}_fastqc.html", sample=SAMPLES, i=[1, 2])
+    conda:
+        "envs/qc.yml"
+    resources:
+        time_min = 60,
+        cpus = len(SAMPLES) * 2 if len(SAMPLES) < 16 else 32
+    params:
+        job_name = f"{config['proj']}_FASTQC"
+    shell:
+        f"fastqc -t {{resources.cpus}} -o {PREFIX}/qc {{input}}"
 
 rule trimgalore_single:
     input:
-        expand(f"{PREFIX}/fastq/{{sample}}.fq.gz", sample=SAMPLES)
+        expand(f"{PREFIX}/fastq/{{sample}}.{EXT}", sample=SAMPLES)
     output:
         expand(f"{PREFIX}/fastq/{{sample}}_trimmed.fq.gz", sample=SAMPLES)
     resources:
-        time_min = 120,
+        time_min = 180,
         cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
     params:
         job_name = f"{config['proj']}_TRIMSINGLE"
@@ -93,11 +155,11 @@ rule trimgalore_single:
 
 rule trimgalore_paired:
     input:
-        expand(f"{PREFIX}/fastq/{{sample}}_{{i}}.fq.gz", sample=SAMPLES, i=[1, 2])
+        expand(f"{PREFIX}/fastq/{{sample}}_{{i}}.{EXT}", sample=SAMPLES, i=[1, 2])
     output:
         expand(f"{PREFIX}/fastq/{{sample}}_{{i}}_val_{{i}}.fq.gz", sample=SAMPLES, i=[1, 2])
     resources:
-        time_min = 120,
+        time_min = 180,
         cpus = len(SAMPLES) * 2 if len(SAMPLES) < 16 else 32
     params:
         job_name = f"{config['proj']}_TRIMPAIRED"
@@ -107,14 +169,14 @@ rule trimgalore_paired:
 
 rule star_alignment:
     input:
-        reads = get_fastq_reads
+        reads = get_trimmed_reads
     output:
         f"{PREFIX}/bam/{{sample}}.bam"
     resources:
-        time_min = 240,
-        cpus = 6
+        time_min = 30,
+        cpus = 12
     params:
-        job_name = "{sample}_STARALIGN"
+        job_name = f"{config['proj']}_{{sample}}_STARALIGN"
     run:
         shell(f"""STAR \
         --runThreadN {{resources.cpus}} \
@@ -155,3 +217,19 @@ rule featureCounts_counting:
         -i {PREFIX}/processed/{config['proj']}_featurecounts_raw.txt \
         -o  {PREFIX}/processed/{config['proj']}_rawCounts.txt
         """)
+
+rule multiqc:
+    input:
+        qc_report = get_fastqc,
+        bam = expand(f"{PREFIX}/bam/{{sample}}.bam", sample=SAMPLES)
+    output:
+        f"{PREFIX}/qc/multiqc_report.html"
+    resources:
+        time_min = 30,
+        cpus = 1
+    params:
+        job_name = f"{config['proj']}_MULTIQC"
+    conda:
+        "envs/qc.yml"
+    shell:
+        f"multiqc -o {PREFIX}/qc {PREFIX}"

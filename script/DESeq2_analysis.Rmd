@@ -1,5 +1,5 @@
 ---
-title: "R Notebook"
+title: "RNA-seq DESeq2 Analysis"
 output: html_notebook
 ---
 
@@ -15,7 +15,6 @@ suppressPackageStartupMessages({
   library(glue)
   library(biomaRt)
   library(dplyr)
-  library(ggVennDiagram)
 })
 ```
 
@@ -60,17 +59,16 @@ format_condition <- function (colnames) {
 ```
 
 ```{r load_data}
-proj <- "PROJ1672"
+proj <- "GSE98563"
 counts <- read.table(glue("processed/{proj}_rawCounts.txt"),
                      header=TRUE, sep='\t',
                      row.names=1, check.names=FALSE)
 
-# Design
-group <- "B3KO"
-control <- "B3KO_T0"
-treatment <- "B3KO_T3"
+# Design 
+control <- "WT_normalMCSF_Untreated"
+treatment <- "WT_normalMCSF_LPS"
 
-alpha <- 1e-10
+alpha <- 0.05
 lfcThresh <- 0
 
 # counts$Length <- NULL
@@ -82,27 +80,29 @@ counts <- aggregate(counts[, -1], by=list(gene=counts$gene), FUN=sum)
 rownames(counts) <- counts$gene
 counts$gene <- NULL
 
-# Group counts
-counts.grp <- dplyr::select(counts, matches(group))
+counts$Length <- NULL
 ```
 
 ```{r deseq2}
 # Create DDS object
-colData <- data.frame(row.names=colnames(counts.grp),
-                      condition=format_condition(colnames(counts.grp)))
-dds <- DESeqDataSetFromMatrix(countData=counts.grp,
+colData <- data.frame(row.names=colnames(counts),
+                      condition=format_condition(colnames(counts)))
+dds <- DESeqDataSetFromMatrix(countData=counts,
                               colData=colData,
                               design=~condition)
 
-dds$condition <- relevel(dds$condition, ref=glue(control))
+dds$condition <- relevel(dds$condition, ref=control)
 
 # PCA plot
 rld <- vst(dds, blind=TRUE)
+
+png(glue("processed/{proj}_PCA.png"))
 plotPCA(rld)
+dev.off()
 
 # Remove low count data
-keep <- rowSums(counts(dds)) >= 10
-dds <- dds[keep, ]
+# keep <- rowSums(counts(dds)) >= 10
+# dds <- dds[keep, ]
 
 # DESeq2 analysis
 dds <- DESeq(dds)
@@ -128,46 +128,4 @@ DESeq2::plotMA(res,
           n={nUp + nDown}, UP={nUp}, DOWN={nDown}
           alpha={alpha}"))
 dev.off()
-```
-
-``` {r venn_diagram}
-alpha <- 1e-10
-
-set1 <- read.table(glue("processed/PROJ1672_DESeq_WT_T5_vs_WT_T0.txt"),
-                   header=TRUE, sep='\t',
-                   row.names=1, check.names=FALSE) %>%
-  filter(padj < alpha)
-set2 <- read.table(glue("processed/PROJ1672_DESeq_B3KO_T5_vs_B3KO_T0.txt"),
-                   header=TRUE, sep='\t',
-                   row.names=1, check.names=FALSE) %>%
-  filter(padj < alpha)
-
-totalSet <- list(
-  set1=rownames(set1),
-  set2=rownames(set2)
-)
-
-# Generate Venn Diagram
-venn <- ggVennDiagram(totalSet,
-                      category.names=c("WT", "HSPB3")) +
-  theme(legend.position="bottom") +
-  ggtitle(glue("T5 genes (alpha={alpha})"))
-
-ggsave(glue("processed/{proj}_venn_T5.png"), venn)
-
-# Parse Venn diagram into separate lists
-wt <- set1[!(rownames(set1) %in% rownames(set2)), ]
-hspb3 <- set2[!(rownames(set2) %in% rownames(set1)), ]
-both <- set1[!(rownames(set1) %in% rownames(wt)), ]
-
-write.table(wt,
-            file=glue("processed/{proj}_T5_WTonly_{alpha}.txt"),
-            row.names=TRUE, col.names=TRUE, sep="\t", quote=FALSE)
-write.table(hspb3,
-            file=glue("processed/{proj}_T5_HSPB3only_{alpha}.txt"),
-            row.names=TRUE, col.names=TRUE, sep="\t", quote=FALSE)
-write.table(both,
-            file=glue("processed/{proj}_T5_WTandHSPB3_{alpha}.txt"),
-            row.names=TRUE, col.names=TRUE, sep="\t", quote=FALSE)
-
 ```
