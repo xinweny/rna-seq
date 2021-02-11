@@ -56,9 +56,11 @@ def infer_strandedness(bedgenome_path, bam_path):
     fr_firststrand = float(rseqc_out[5].split(' ')[-1])
     fr_secondstrand = float(rseqc_out[4].split(' ')[-1])
 
-    if fr_firststrand > 0.85:
+    threshold = 0.8
+
+    if fr_firststrand > threshold:
         library_type = 'fr-firststrand'
-    elif fr_secondstrand > 0.85:
+    elif fr_secondstrand > threshold:
         library_type = 'fr-secondstrand'
     else:
         library_type = 'fr-unstranded'
@@ -173,7 +175,7 @@ rule star_alignment:
     output:
         f"{PREFIX}/bam/{{sample}}.bam"
     resources:
-        time_min = 30,
+        time_min = 60,
         cpus = 12
     params:
         job_name = f"{config['proj']}_{{sample}}_STARALIGN"
@@ -197,7 +199,7 @@ rule featureCounts_counting:
     output:
         f"{PREFIX}/processed/{config['proj']}_rawCounts.txt"
     resources:
-        time_min = 180,
+        time_min = 30,
         cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
     params:
         job_name = f"{config['proj']}_FEATURECOUNTS",

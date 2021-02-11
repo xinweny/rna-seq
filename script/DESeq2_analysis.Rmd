@@ -59,14 +59,14 @@ format_condition <- function (colnames) {
 ```
 
 ```{r load_data}
-proj <- "GSE98563"
-counts <- read.table(glue("processed/{proj}_rawCounts.txt"),
+proj <- "GSE110243"
+counts <- read.table(glue("processed/{proj}/{proj}_rawCounts.txt"),
                      header=TRUE, sep='\t',
                      row.names=1, check.names=FALSE)
 
 # Design 
-control <- "WT_normalMCSF_Untreated"
-treatment <- "WT_normalMCSF_LPS"
+control <- "WT_untreated"
+treatment <- "WT_LPS"
 
 alpha <- 0.05
 lfcThresh <- 0
@@ -96,7 +96,7 @@ dds$condition <- relevel(dds$condition, ref=control)
 # PCA plot
 rld <- vst(dds, blind=TRUE)
 
-png(glue("processed/{proj}_PCA.png"))
+png(glue("processed/{proj}/{proj}_PCA.png"))
 plotPCA(rld)
 dev.off()
 
@@ -115,14 +115,14 @@ res <- add_ensembl_symbol(res)
 # Save DESeq results table to output
 deGenes <- as.data.frame(res) %>% arrange(padj, desc(log2FoldChange)) # order by adjusted p-value and FC
 write.table(deGenes,
-            file=glue("processed/{proj}_DESeq_{treatment}_vs_{control}.txt"),
+            file=glue("processed/{proj}/{proj}_DESeq_{treatment}_vs_{control}.txt"),
             row.names=TRUE, col.names=TRUE, sep="\t", quote=FALSE)
 
 # Visualisation
 nUp <- nrow(filter(as.data.frame(res), padj < alpha & log2FoldChange > 0))
 nDown <- nrow(filter(as.data.frame(res), padj < alpha & log2FoldChange < 0))
 
-png(glue("processed/{proj}_MAplot_{treatment}_vs_{control}.png"))
+png(glue("processed/{proj}/{proj}_MAplot_{treatment}_vs_{control}.png"))
 DESeq2::plotMA(res, 
                main=glue("{proj}: {treatment} vs. {control}
           n={nUp + nDown}, UP={nUp}, DOWN={nDown}
