@@ -26,19 +26,33 @@ remove_na_dist <- function(mat) {
   }
 }
 
+#### Parameters ####
+alpha <- 0.05
+
 #### Load data ####
-prot.table <- read.csv("~/mrc/project/rna-seq/data/Inflammation_LPSinWTonly_Mus musculus_macrophage_foldChange.txt",
+fc.table <- read.csv("~/mrc/project/rna-seq/data/Inflammation_LPSinWTonly_Mus musculus_macrophage_foldChange.txt",
                           sep="\t")
+padj.table <- read.csv("~/mrc/project/rna-seq/data/Inflammation_LPSinWTonly_Mus musculus_macrophage_padj.txt",
+                       sep="\t")
+
+# Remove custom columns
+delete.columns <- c('GSE82043', 'GSE157786', 'GSE123596', 'GSE122292', 'GSE110243', 'GSE98563')
+
+fc.table <- fc.table[, -which(names(fc.table) %in% delete.columns)]
+padj.table <- padj.table[, -which(names(padj.table) %in% delete.columns)]
 
 #### Z-scoring ####
 # Convert to matrix and z-scoring by gene (rows)
-z.matrix <- t(scale(t(data.matrix(prot.table[, 3:ncol(z.table)])),
+z.matrix <- t(scale(t(data.matrix(fc.table[, 3:ncol(fc.table)])),
                     center=TRUE, scale=TRUE))
 
 # Set gene symbol as matrix row names
-rownames(z.matrix) <- prot.table[, 2]
+rownames(z.matrix) <- fc.table[, 2]
 
 #### Filtering ####
+# Convert non-significant gene fold-changes with p < alpha to NA
+z.matrix[which(padj.table[, -c(1:2)] > alpha)] <- NA
+
 # Remove rows and columns with all NA
 z.matrix <- z.matrix[rowSums(is.na(z.matrix)) != ncol(z.matrix),
                      colSums(is.na(z.matrix)) < nrow(z.matrix)]
@@ -47,27 +61,27 @@ z.matrix <- z.matrix[rowSums(is.na(z.matrix)) != ncol(z.matrix),
 z.filt.matrix <- remove_na_dist(z.matrix)
 print(glue("Genes remaining: {nrow(z.filt.matrix)} out of {nrow(prot.table)}"))
 
-filt.gene.ids <- prot.table[match(rownames(z.filt.matrix), prot.table$symbol), c("gene_id")]
+filt.gene.ids <- fc.table[match(rownames(z.filt.matrix), fc.table$symbol), c("gene_id")]
 
 #### Heatmap ####
 # Set up colour palette
 palette <- colorRampPalette(c("blue", "white", "red"))(n=299)
 
 # Plot and save static heatmap
-png("~/mrc/project/rna-seq/processed/heatmap.png",
+png(file="~/mrc/project/rna-seq/processed/heatmap_new.png", 
     width=3000, height=9000, res=300)
-heatmap.2(z.filt.matrix,
-          main="Fold-changes of proteostasis genes in mouse BMDM studies",
-          Rowv=TRUE, Colv=TRUE,
-          srtCol=45,
-          labRow=FALSE,
-          notecol="black",
-          density.info="none",
-          trace="none",
-          col=palette,
-          na.color="black",
-          key=TRUE, keysize=1, lhei=c(1, 15), key.xlab="z-score")
-
+hmap <- heatmap.2(z.filt.matrix,
+                     main=glue("Fold-changes of proteostasis genes in mouse BMDM studies (p < {alpha})"),
+                     Rowv=TRUE, Colv=TRUE,
+                     srtCol=45,
+                     labRow=FALSE,
+                     notecol="black",
+                     density.info="none",
+                     trace="none",
+                     col=palette,
+                     na.color="black",
+                     key=TRUE, keysize=1, lhei=c(1, 15), key.xlab="z-score")
+hmap
 dev.off()
 
 ## Interactive heatmap
