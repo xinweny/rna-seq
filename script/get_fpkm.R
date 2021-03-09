@@ -2,6 +2,7 @@
 library(DESeq2)
 library(glue)
 library(biomaRt)
+library(dplyr)
 
 setwd("~/mrc/project/rna-seq")
 
@@ -33,11 +34,13 @@ add_ensembl_symbol <- function (table) {
 }
 
 #### Load data ####
-proj <- "GSE147893"
-countsTable <- read.table(glue("processed/{proj}_rawCounts.txt"), header=TRUE, sep='\t',
+proj <- "GSE154573"
+countsTable <- read.table(glue("processed/{proj}/{proj}_rawCounts.txt"), header=TRUE, sep='\t',
                           row.names=1, check.names=FALSE)
 counts <- countsTable
 counts$Length <- NULL
+
+counts <- counts %>% dplyr::select(matches("WT"))
 
 #### DESeq2 ####
 # Create DDS object
@@ -57,5 +60,12 @@ dds.fpkm <- fpkm(dds)
 # dds.fpkm <- add_ensembl_symbol(dds.fpkm)
 
 # Save to output
-write.table(dds.fpkm, file=glue("processed/{proj}_fpkm.txt"),
+write.table(dds.fpkm, file=glue("processed/{proj}/{proj}_fpkm.txt"),
+            row.names=TRUE, col.names=TRUE, sep="\t", quote=FALSE)
+
+#### Filtering ####
+fpkm.thresh <- 1
+
+dds.fpkm.filt <- dds.fpkm[which(rowMeans(dds.fpkm) > fpkm.thresh), ]
+write.table(dds.fpkm.filt, file=glue("processed/{proj}/{proj}_fpkm_filtered.txt"),
             row.names=TRUE, col.names=TRUE, sep="\t", quote=FALSE)

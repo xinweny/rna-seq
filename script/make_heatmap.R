@@ -32,19 +32,36 @@ remove_na_dist <- function(mat) {
 
 #### Parameters ####
 alpha <- 0.05
+cluster.cols <- FALSE
+k.cluster.rows <- FALSE
 
-delete.columns <- c('GSE122292', 'GSE110243', 'GSE123596', 'GSE98563', 'GSE82043')
+delete.columns <- c()
+# BMDM - c('GSE122292', 'GSE110243', 'GSE123596', 'GSE98563', 'GSE82043')
+# microglia - c('GSE117646', 'GSE79898', 'GSE98142', 'GSE105155', 'GSE153419', 'GSE75246')
+select.columns <- c()
+gse <- 'PROJ1742'
+# GSE97538 - c('GSE97538_WT', 'GSE97538_A20')
+# GSE143241 - c('GSE143241_WT', 'GSE143241_TTP')
+# GSE134443 - c('GSE134443_WT', 'GSE134443_TRPM5')
+
+heatmap.filename <- glue("~/mrc/project/rna-seq/processed/heatmap_{gse}.png")
 
 #### Load data ####
-fc.table <- read.csv("~/mrc/project/rna-seq/data/Inflammation_LPSinWTonly_Mus musculus_macrophage_foldChange.txt",
+fc.table <- read.csv(glue("~/mrc/project/rna-seq/data/{gse}_foldChange.txt"),
                           sep="\t")
-padj.table <- read.csv("~/mrc/project/rna-seq/data/Inflammation_LPSinWTonly_Mus musculus_macrophage_padj.txt",
+padj.table <- read.csv(glue("~/mrc/project/rna-seq/data/{gse}_padj.txt"),
                        sep="\t")
 
-# Remove custom columns
+# Remove/Select custom columns
 if (length(delete.columns) > 0) {
   fc.table <- fc.table[, -which(names(fc.table) %in% delete.columns)]
   padj.table <- padj.table[, -which(names(padj.table) %in% delete.columns)]
+}
+
+if (length(select.columns) > 0) {
+  select.columns <- c(c('gene_id', 'symbol'), select.columns)
+  fc.table <- fc.table[, which(names(fc.table) %in% select.columns)]
+  padj.table <- padj.table[, which(names(padj.table) %in% select.columns)]
 }
 
 # Convert to matrix
@@ -55,11 +72,14 @@ rownames(fc.matrix) <- fc.table[, 2]
 
 #### Filtering ####
 # Convert non-significant gene fold-changes with p < alpha to NA
-fc.matrix[which(padj.table[, -c(1:2)] > alpha)] <- NA
+fc.matrix[which(padj.table[, -c(1:2)] > alpha)] <- 0
+fc.matrix[is.na(padj.table[, -c(1:2)])] <- 0
 
-# Remove rows and columns with all NA
+# Remove rows and columns with all NA or 0
 fc.matrix <- fc.matrix[rowSums(is.na(fc.matrix)) != ncol(fc.matrix),
                        colSums(is.na(fc.matrix)) != nrow(fc.matrix)]
+
+fc.matrix <- fc.matrix[rowSums(fc.matrix) != 0, ]
 
 # Rank genes by mean fold-change across GSEs
 # fc.matrix[is.na(fc.matrix)] <- 0
@@ -79,33 +99,67 @@ filt.gene.ids <- fc.table[match(rownames(fc.filt.matrix), fc.table$symbol), c("g
 palette <- colorRampPalette(c("blue", "white", "red"))(n=299)
 
 # Clustering on rows and columns
+k.rows <- 6
+k.cols <- 2
+
 Rowv <- fc.filt.matrix %>% dist %>% hclust %>% as.dendrogram %>%
-  set("branches_k_color", k=5) %>% set("branches_lwd", 4) %>%
+  set("branches_k_color", k=k.rows) %>% 
+  set("labels_col", k=k.rows) %>%
+  set("branches_lwd", 4) %>%
   rotate_DendSer(ser_weight=dist(fc.filt.matrix))
+
 Colv <- fc.filt.matrix %>% t %>% dist %>% hclust %>% as.dendrogram %>%
-  set("branches_k_color", k=2) %>% set("branches_lwd", 4) %>%
+  set("branches_k_color", k=k.cols) %>% 
+  set("branches_lwd", 4) %>%
   rotate_DendSer(ser_weight=dist(t(fc.filt.matrix)))
 
 # Plot and save static heatmap
-png(file="~/mrc/project/rna-seq/processed/heatmap.png", 
-    width=3000, height=9000, res=300)
-hm <- heatmap.2(fc.filt.matrix,
-                scale="none",
-                main=glue("Fold-changes of proteostasis genes (n={nrow(fc.filt.matrix)})
-                in mouse BMDM studies (N={ncol(fc.filt.matrix)}),
-                          p < {alpha}"),
-                Rowv=Rowv, Colv=TRUE,
-                srtCol=45,
-                labRow=FALSE, # row.names(fc.filt.matrix)
-                notecol="black",
-                density.info="none",
-                trace="none",
-                col=palette,
-                symbreaks=TRUE,
-                na.color="black",
-                key=TRUE, keysize=1, lhei=c(1, 15), key.xlab="log2(fold-change)")
-hm
-dev.off()
+if (length(select.columns) == 0) {
+  png(file=heatmap.filename, 
+      width=3000, height=9000, res=300)
+  hm <- heatmap.2(fc.filt.matrix,
+                  scale="none",
+                  main=glue("Fold-changes of proteostasis genes (n={nrow(fc.filt.matrix)})
+                  over PROJ1742 timepoints (N={ncol(fc.filt.matrix)}),
+                  p < {alpha}"),
+                  Rowv=if (k.cluster.rows) Rowv else TRUE,
+                  Colv=cluster.cols,
+                  dendrogram=if (cluster.cols) "both" else "row",
+                  srtCol=45, offsetCol=0.5,
+                  margins=c(10, 5),
+                  labRow=FALSE, # row.names(fc.filt.matrix)
+                  notecol="black",
+                  density.info="none",
+                  trace="none",
+                  col=palette,
+                  symbreaks=TRUE,
+                  na.color="black",
+                  key=TRUE, keysize=1, lhei=c(1, 15), key.xlab="log2(foldChange)")
+  hm
+  dev.off()
+} else {
+  png(file=heatmap.filename, 
+      width=3000, height=9000, res=300)
+  hm <- heatmap.2(fc.filt.matrix,
+                  scale="none",
+                  main=glue("Fold-changes of proteostasis genes (n={nrow(fc.filt.matrix)})
+                  in {gse} LPS treatment in WT and KO,
+                  p < {alpha}"),
+                  Rowv=TRUE, Colv=FALSE,
+                  dendrogram='row',
+                  srtCol=45, offsetCol=0.5, cexCol=2,
+                  margins=c(12, 5),
+                  labRow=FALSE, # row.names(fc.filt.matrix)
+                  notecol="black",
+                  density.info="none",
+                  trace="none",
+                  col=palette,
+                  symbreaks=TRUE,
+                  na.color="black",
+                  key=TRUE, keysize=1, lhei=c(1, 15), key.xlab="log2(fold-change)")
+  hm
+  dev.off()
+}
 
 #### Interactive heatmap ####
 library(heatmaply)
@@ -131,13 +185,14 @@ heatmaply(fc.filt.matrix,
 browseURL("~/mrc/project/rna-seq/processed/heatmap.html")
 
 #### Extract clusters ####
-row.clusts <- sort(cutree(fc.filt.matrix %>% dist %>% hclust, k=5))
+row.clusts <- cutree(fc.filt.matrix %>% dist %>% hclust, k=k.rows)
 
-table(row.clusts)
+row.clusts.cols <- labels_colors(Rowv)[row.clusts %>% sort %>% names]
+table(row.clusts.cols)
 
-select.clusts <- c(4, 5)
-select.genes <- names(row.clusts[which(row.clusts %in% select.clusts)])
+select.clusts <- c("#A352D1", "#008FB7", "#009232")
+select.genes <- names(row.clusts.cols[which(row.clusts.cols %in% select.clusts)])
 
 write.table(fc.table[which(fc.table$symbol %in% select.genes), ],
-            file=glue("~/mrc/project/rna-seq/processed/heatmap_upreg_genes.txt"),
+            file=glue("~/mrc/project/rna-seq/processed/heatmap_BMDM_upreg_genes.txt"),
             row.names=FALSE, col.names=TRUE, sep="\t", quote=FALSE)

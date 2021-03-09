@@ -22,10 +22,10 @@ def get_raw_reads(wcs):
 
 def get_trimmed_reads(wcs):
     if LAYOUT == 'PAIRED':  # Paired-end
-        return [f"{PREFIX}/fastq/{wcs.sample}_{i}_val_{i}.fq.gz" for i in [1, 2]]
+        return [f"{PREFIX}/fastq_trimmed/{wcs.sample}_{i}_val_{i}.fq.gz" for i in [1, 2]]
 
     if LAYOUT == 'SINGLE':  # Single-end
-        return [f"{PREFIX}/fastq/{wcs.sample}_trimmed.fq.gz"]
+        return [f"{PREFIX}/fastq_trimmed/{wcs.sample}_trimmed.fq.gz"]
 
 def get_fastqc(wcs):
     if LAYOUT == 'PAIRED':  # Paired-end
@@ -110,6 +110,11 @@ rule all:
         expand(f"{PREFIX}/bam/{{sample}}.bam", sample=SAMPLES),
         f"{PREFIX}/processed/{config['proj']}_rawCounts.txt",
         f"{PREFIX}/qc/multiqc_report.html"
+    params:
+        job_name = f"{config['proj']}_ALL"
+    resources:
+        time_min = 1,
+        cpus = 1
 
 rule fastqc_single:
     input:
@@ -145,7 +150,7 @@ rule trimgalore_single:
     input:
         expand(f"{PREFIX}/fastq/{{sample}}.{EXT}", sample=SAMPLES)
     output:
-        expand(f"{PREFIX}/fastq/{{sample}}_trimmed.fq.gz", sample=SAMPLES)
+        expand(f"{PREFIX}/fastq_trimmed/{{sample}}_trimmed.fq.gz", sample=SAMPLES)
     resources:
         time_min = 180,
         cpus = len(SAMPLES) if len(SAMPLES) < 32 else 32
@@ -153,13 +158,13 @@ rule trimgalore_single:
         job_name = f"{config['proj']}_TRIMSINGLE"
     shell:
         f"""trim_galore -j {{resources.cpus}} --stringency 3 \
-            -o {PREFIX}/fastq {{input}}"""
+            -o {PREFIX}/fastq_trimmed {{input}}"""
 
 rule trimgalore_paired:
     input:
         expand(f"{PREFIX}/fastq/{{sample}}_{{i}}.{EXT}", sample=SAMPLES, i=[1, 2])
     output:
-        expand(f"{PREFIX}/fastq/{{sample}}_{{i}}_val_{{i}}.fq.gz", sample=SAMPLES, i=[1, 2])
+        expand(f"{PREFIX}/fastq_trimmed/{{sample}}_{{i}}_val_{{i}}.fq.gz", sample=SAMPLES, i=[1, 2])
     resources:
         time_min = 180,
         cpus = len(SAMPLES) * 2 if len(SAMPLES) < 16 else 32
@@ -167,7 +172,7 @@ rule trimgalore_paired:
         job_name = f"{config['proj']}_TRIMPAIRED"
     shell:
         f"""trim_galore -j {{resources.cpus}} --stringency 3 --paired \
-            -o {PREFIX}/fastq {{input}}"""
+            -o {PREFIX}/fastq_trimmed {{input}}"""
 
 rule star_alignment:
     input:
@@ -175,8 +180,8 @@ rule star_alignment:
     output:
         f"{PREFIX}/bam/{{sample}}.bam"
     resources:
-        time_min = 60,
-        cpus = 12
+        time_min = int(custom_param('star_time', 60)),
+        cpus = int(custom_param('star_cpus', 12))
     params:
         job_name = f"{config['proj']}_{{sample}}_STARALIGN"
     run:
@@ -187,11 +192,13 @@ rule star_alignment:
         --readFilesIn {{input.reads}} \
         --readFilesCommand gunzip -c \
         --outFileNamePrefix {PREFIX}/bam/{{wildcards.sample}} \
-        --outSAMtype BAM SortedByCoordinate \
+        --outSAMtype BAM Unsorted \
         --outSAMunmapped Within \
         --outSAMattributes Standard
         """)
-        shell(f"samtools sort {PREFIX}/bam/{{wildcards.sample}}Aligned.sortedByCoord.out.bam -o {PREFIX}/bam/{{wildcards.sample}}.bam")
+        shell(f"samtools sort -@ {{resources.cpus}} \
+        {PREFIX}/bam/{{wildcards.sample}}Aligned.out.bam \
+        -o {PREFIX}/bam/{{wildcards.sample}}.bam")
 
 rule featureCounts_counting:
     input:

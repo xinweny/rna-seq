@@ -59,17 +59,18 @@ format_condition <- function (colnames) {
 ```
 
 ```{r load_data}
-proj <- "GSE110243"
-counts <- read.table(glue("processed/{proj}/{proj}_rawCounts.txt"),
-                     header=TRUE, sep='\t',
-                     row.names=1, check.names=FALSE)
-
 # Design 
-control <- "WT_untreated"
-treatment <- "WT_LPS"
+proj <- "PROJ1742"
+
+control <- "WT_D0"
+treatment <- "WT_H16"
 
 alpha <- 0.05
 lfcThresh <- 0
+
+counts <- read.table(glue("processed/{proj}/{proj}_rawCounts.txt"),
+                     header=TRUE, sep='\t',
+                     row.names=1, check.names=FALSE)
 
 # counts$Length <- NULL
 counts <- cbind(gene=rownames(counts), counts)

@@ -1,0 +1,68 @@
+---
+title: "RNA-seq heatmap analysis"
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+require("knitr")
+opts_knit$set(root.dir="~/mrc/project/rna-seq/")
+```
+
+```{r packages}
+suppressPackageStartupMessages({
+  library(gplots)
+  library(RColorBrewer)
+  library(dplyr)
+  library(glue)
+  library(dendextend)
+})
+```
+
+```{r functions}
+remove_na_dist <- function(mat) {
+  dist.mat <- as.matrix(dist(mat))
+  
+  distNAs <- sum(is.na(dist.mat))
+  
+  if (distNAs > 0) {
+    giveNAs <- which(is.na(dist.mat),
+                     arr.ind=TRUE)
+    
+    tab <- sort(table(c(giveNAs)), 
+                decreasing=TRUE)
+    
+    checkNA <- sapply(1:length(tab), function(i) {
+      sum(is.na(as.matrix(dist(mat[-as.numeric(names(tab[1:i])), ]))))})
+    
+    rmv <- names(tab)[1:min(which(checkNA == 0))]
+    
+    return(mat[-as.numeric(rmv), ])
+    
+  } else {
+    return(mat)
+  }
+}
+```
+
+```{r parameters}
+```
+
+```{r load_data}
+```
+
+```{r filtering}
+```
+
+```{r dendrogram}
+```
+
+```{r static_heatmap}
+```
+
+```{r interactive_heatmap}
+```
+
+```{r extract_clusters}
+```
+
+
+
